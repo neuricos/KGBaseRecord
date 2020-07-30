@@ -2,6 +2,7 @@ from random import choice, randint, random, choices
 from datetime import datetime, timedelta
 import json
 from common import OptionDiffLevel
+from exprcontr import expr_pcontr
 
 # Each record of a user consists of the following info
 # Record = ConceptIDs, DifficultyLevel, CorrectAnswer, UserAnswer, TimeSpent, SubmitTimeStamp
@@ -17,8 +18,9 @@ class RecordDB:
         self.__question_dict = { q[0]: q for q in questions }
 
         self.__record_database = { p.id: {} for p in self.__profiles }              # key=question id, value=Records
-        self.__concept_database = { p.id: {} for p in self.__profiles }             # key=concept id, value=['#Correct', '#Wrong']
+        self.__concept_database = { p.id: {} for p in self.__profiles }             # key=concept id, value=[True/False, ...]
         self.__time_database = { p.id: None for p in self.__profiles }              # value=timestamp of the last time the user solving a question
+        self.__concept_correlations = dict()                                        # key=concept id, value= {concept id, correlation value}
 
     @staticmethod
     def answering(correctness, answer):
@@ -28,6 +30,20 @@ class RecordDB:
             option_set = list('ABCD')
             option_set.remove(answer)
             return choice(option_set)
+
+    def concept_correlate(self, cpt_a, cpt_b, cv):
+        if cpt_a not in self.__concepts:
+            raise ValueError(f"Concept {repr(cpt_a)} does not exist in RecordDB")
+        if cpt_b not in self.__concepts:
+            raise ValueError(f"Concept {repr(cpt_b)} does not exist in RecordDB")
+        if not isinstance(cv, float) or cv < -1 or cv > 1:
+            raise ValueError("Correlation value needs to be a float number within range [-1, 1]")
+        if cpt_a not in self.__concept_correlations:
+            self.__concept_correlations[cpt_a] = {}
+        if cpt_b not in self.__concept_correlations:
+            self.__concept_correlations[cpt_b] = {}
+        self.__concept_correlations[cpt_a][cpt_b] = cv
+        self.__concept_correlations[cpt_b][cpt_a] = cv
 
     def dump_records(self, filename):
         with open(filename, 'w') as f:
@@ -89,41 +105,30 @@ class RecordDB:
 
         to_submit_user_answer = None
 
-        if question_id in self.__record_database[userid]:
-            qrecords = list(self.__record_database[userid][question_id])
-            qr = sorted(qrecords, key=lambda r: -r[5])[0]
-            time_diff = (datetime.fromtimestamp(qr[5]) - datetime.now()).total_seconds() // 60 // 60
-            # If the user has done the question within a day, then s/he has 90% chance of doing it right
-            if time_diff <= 24:
-                to_submit_correct = choices([True, False], weights=[0.9, 0.1])[0]
-                to_submit_user_answer = RecordDB.answering(to_submit_correct, to_submit_correct_answer)
-            # If the user has done the question within a week, then s/he has 85% chance of doing it right
-            elif time_diff <= 7 * 24:
-                to_submit_correct = choices([True, False], weights=[0.85, 0.15])[0]
-                to_submit_user_answer = RecordDB.answering(to_submit_correct, to_submit_correct_answer)
-            # If the user has done the question within a month, then s/he has 80% chance of doing it right
-            elif time_diff <= 30 * 7 * 24:
-                to_submit_correct = choices([True, False], weights=[0.8, 0.2])[0]
-                to_submit_user_answer = RecordDB.answering(to_submit_correct, to_submit_correct_answer)
-            else:
-                # Calculate the corretness of each concept and average them
-                concept_records = list(filter(lambda r: r[0] != 0 or r[1] != 0, concept_records))
-                concept_correctness = [cr[0] / (cr[0] + cr[1] + 1) for cr in concept_records]
-                concept_correctness_avg = sum(concept_correctness) / len(concept_correctness) if len(concept_correctness) > 0 else 0.5
-                # 10% -> lunk
-                # 30% -> compound index
-                # 30% -> record
-                # 30% -> base
-                prob = 0.1 * randint(0, 1) + 0.3 * self.__profile_dict[userid].compound_index + 0.3 * concept_correctness_avg + 0.3
-                to_submit_correct = choices([True, False], weights=[prob, 1 - prob])[0]
-                to_submit_user_answer = RecordDB.answering(to_submit_correct, to_submit_correct_answer)
-        else:
-            # 40% -> luck
-            # 50% -> compound index
-            # 10% -> base
-            prob = 0.4 * randint(0, 1) + 0.5 * self.__profile_dict[userid].compound_index + 0.1
-            to_submit_correct = choices([True, False], weights=[prob, 1 - prob])[0]
-            to_submit_user_answer = RecordDB.answering(to_submit_correct, to_submit_correct_answer)
+        # This version does not take into account when the user does the question last time
+        # It only cares about how many times the user has done questions related to a specific
+        # concept and whether s/he has answered correctly or not
+
+        prob_contr = 0
+
+        if len(concept_records) != 0:
+            # Iterate over each concept and calculate its probability contribution
+            for cr in concept_records:
+                prob_contr += expr_pcontr(cr)
+            prob_contr /= len(concept_records)
+
+        cmpindex = self.__profile_dict[userid].compound_index
+
+        # base:             25%                             => pure guess
+        # experience:       25%                             => the more times the user has done questions with similar concepts,
+        #                                                      the more likely s/he would successfully solve it
+        # compound index:   40%                             => the higher level of education the user has received,
+        #                                                      the more likely s/he would be able to solve it
+        # luck:             10%                             => whether or not the user is lucky enough to guess out the right answer
+
+        tot_prob = 0.25 * 1 + 0.25 * prob_contr + 0.40 *  + 0.10 * randint(0, 1)
+        to_submit_correct = choices([True, False], weights=[tot_prob, 1 - tot_prob])[0]
+        to_submit_user_answer = RecordDB.answering(to_submit_correct, to_submit_correct_answer)
 
         new_record = (
             linked_concepts,
@@ -139,7 +144,6 @@ class RecordDB:
         self.__record_database[userid][question_id].append(new_record)
         for lcpt in linked_concepts:
             if lcpt not in self.__concept_database[userid]:
-                self.__concept_database[userid][lcpt] = [0, 0]
-            target_index = 0 if to_submit_correct_answer == to_submit_user_answer else 1
-            self.__concept_database[userid][lcpt][target_index] += 1
+                self.__concept_database[userid][lcpt] = []
+            self.__concept_database[userid][lcpt].append(True if to_submit_correct else False)
         self.__time_database[userid] = to_submit_timestamp

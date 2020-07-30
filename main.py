@@ -15,7 +15,19 @@ user_profiles = tuple(PGen.gen_profile() for _ in range(NUM_USERS))
 
 # Generate concepts
 
-concepts = tuple(f"concept-{uuid4()}" for _ in range(NUM_CONCEPTS))
+dummy_prefix = "DM - "
+
+concepts = list(f"concept-{uuid4()}" for _ in range(NUM_CONCEPTS))
+
+bfs = f"{dummy_prefix}Banking Financial Statement"
+mfs = f"{dummy_prefix}Market Financial Statement"
+netin = f"{dummy_prefix}Net Income"
+exps = f"{dummy_prefix}Expenditure"
+
+# Add some dummy concepts
+concepts.extend([bfs, mfs, netin, exps])
+
+concepts = tuple(concepts)
 
 # Generate questions
 
@@ -37,5 +49,8 @@ rdb = RecordDB(user_profiles, concepts, questions)
 for i in range(1000):
     userid = choice(user_profiles).id
     rdb.gen_record(userid)
+
+rdb.concept_correlate(bfs, mfs, 0.7)
+rdb.concept_correlate(netin, exps, -0.6)
 
 rdb.dump_records('output.json')

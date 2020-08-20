@@ -126,7 +126,7 @@ class RecordDB:
         #                                                      the more likely s/he would be able to solve it
         # luck:             10%                             => whether or not the user is lucky enough to guess out the right answer
 
-        tot_prob = 0.25 * 1 + 0.25 * prob_contr + 0.40 *  + 0.10 * randint(0, 1)
+        tot_prob = 0.25 * 1 + 0.25 * prob_contr + 0.40 * cmpindex + 0.10 * randint(0, 1)
         to_submit_correct = choices([True, False], weights=[tot_prob, 1 - tot_prob])[0]
         to_submit_user_answer = RecordDB.answering(to_submit_correct, to_submit_correct_answer)
 

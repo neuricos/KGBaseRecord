@@ -1,6 +1,7 @@
 class Profile:
 
     MAX_AGE = 20
+    EDU_MULTIPLIER = { 1: 1.0, 2: 1.12, 3: 1.25 }
 
     def __init__(self, userid, age, education, baseiq, basemidx):
         self.__id = userid
@@ -37,6 +38,7 @@ class Profile:
 
     @property
     def compound_index(self):
-        total = self.education * (self.current_iq + self.current_midx)
-        cpd_max = 3 * (150 + 150)
+        cls = type(self)
+        total = cls.EDU_MULTIPLIER[self.education] * (self.current_iq + self.current_midx)
+        cpd_max = max(cls.EDU_MULTIPLIER.values()) * (150 + 150)
         return total / cpd_max
